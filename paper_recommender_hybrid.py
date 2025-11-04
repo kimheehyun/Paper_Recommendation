@@ -9,17 +9,6 @@ from datetime import datetime
 from groq import Groq
 import os
 import time
-from deep_translator import GoogleTranslator
-
-# ========================================
-# 번역 함수 (한국어 → 영어)
-# ========================================
-def to_english(text: str) -> str:
-    """자동 감지 후 영어로 번역. 실패 시 원문 그대로 반환"""
-    try:
-        return GoogleTranslator(source="auto", target="en").translate(text)
-    except Exception:
-        return text
 
 # ========================================
 # Groq API 설정
@@ -131,7 +120,7 @@ def fetch_semanticscholar_info(title, arxiv_id):
                 res = requests.get(url_id, params=params_id, timeout=5)
                 if res.status_code == 200:
                     paper = res.json()
-                    if paper.get("paperId"):  
+                    if paper.get("paperId"): 
                         return paper, "arxiv_id"
         except Exception:
             return None, None
@@ -232,10 +221,10 @@ def build_co_citation_scores(paper_ids, limit=100, similarity_metric="jaccard", 
         
         if citations:
             seed_citation_sets.append(set(citations))
-            st.caption(f"  ✓ 시드 논문 {idx+1}: {len(citations)}개 인용 발견")
+            st.caption(f"   ✓ 시드 논문 {idx+1}: {len(citations)}개 인용 발견")
         else:
             seed_citation_sets.append(set())
-            st.caption(f"  ✗ 시드 논문 {idx+1}: 인용 정보 없음")
+            st.caption(f"   ✗ 시드 논문 {idx+1}: 인용 정보 없음")
     
     # 모든 시드의 인용 집합이 비어있으면 종료
     if all(len(s) == 0 for s in seed_citation_sets):
@@ -257,10 +246,10 @@ def build_co_citation_scores(paper_ids, limit=100, similarity_metric="jaccard", 
                 all_citation_sets.append(set(citations) if citations else set())
         else:
             all_citation_sets.append(set())
-    
+        
         # 진행상황 표시 (10개마다)
         if (idx + 1) % 10 == 0:
-            st.caption(f"  처리 중: {idx+1}/{len(paper_ids)}")
+            st.caption(f"   처리 중: {idx+1}/{len(paper_ids)}")
     
     # 4단계: 각 후보 논문과 시드 논문들 간의 공동인용 유사도 계산
     scores = []
@@ -288,10 +277,8 @@ def build_co_citation_scores(paper_ids, limit=100, similarity_metric="jaccard", 
             
             if union > 0:
                 if similarity_metric == "cosine":
-                    # Cosine 유사도 (셋 기반)
                     sim = intersection / np.sqrt(len(candidate_set) * len(seed_set))
                 else:  # jaccard
-                    # Jaccard 유사도
                     sim = intersection / union
                 similarities.append(sim)
         
@@ -317,6 +304,7 @@ def build_co_citation_scores(paper_ids, limit=100, similarity_metric="jaccard", 
 def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two_stage=True):
     """
     use_two_stage=True: 50개 수집 → 인용 기반 필터링 → 15개로 압축 → 정밀 분석
+    use_two_stage=False: 기존 방식 (30개 모두 분석)
     """
     papers_df = papers_df.copy()
     papers_df["abstract"] = papers_df["abstract"].fillna("").astype(str)
@@ -347,8 +335,8 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         
         normalized_semantic = semantic_scores / (semantic_scores.max() + 0.001)
         
-        # 1차 점수: 의미 + 인용
-        quick_scores = 0.8 * normalized_semantic + 0.2 * normalized_citations
+        # 1차 점수: 의미(70%) + 인용(30%)
+        quick_scores = 0.7 * normalized_semantic + 0.3 * normalized_citations
         
         # 상위 15개만 선택 (정밀 분석 대상)
         top_15_idx = np.argsort(quick_scores)[::-1][:15]
@@ -370,19 +358,17 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
     paper_ids = []
     
     for idx, row in papers_df.iterrows():
-        info = fetch_semanticscholar_info(title=row["title"], arxiv_id=row["arxiv_id"])  
+        info = fetch_semanticscholar_info(title=row["title"], arxiv_id=row["arxiv_id"]) 
         ss_info_list.append(info)
         paper_ids.append(info["paper_id"])
         
         citation_count = info["citation_count"]
-        # 인용 횟수를 100으로 나누어 1.0으로 최대화하는 정규화
         citation_score = min(citation_count / 100, 1.0) if citation_count > 0 else 0
         citation_scores.append(citation_score)
         
         # 최신성 점수
         pub_date = datetime.strptime(row["published"], "%Y-%m-%d")
         days_old = (datetime.now() - pub_date).days
-        # 10년(3650일)을 기준으로 최신성이 0이 되도록 설정
         recency_score = max(1 - (days_old / 3650), 0)
         recency_scores.append(recency_score)
     
@@ -397,18 +383,18 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
     recency_scores = np.array(recency_scores)
     co_citation_scores = np.array(co_citation_scores)
     
-    # semantic_scores 정규화 (최대값을 1로 만듦)
+    # semantic_scores 정규화
     if semantic_scores.max() > 0:
         normalized_semantic = semantic_scores / semantic_scores.max()
     else:
         normalized_semantic = semantic_scores
     
-    # 최종 가중치: 의미(70%) + 인용(10%) + 최신성(10%) + 공동인용(10%)
+    # 최종 가중치: 의미(50%) + 인용(20%) + 최신성(10%) + 공동인용(20%)
     final_scores = (
-        0.70 * normalized_semantic
-        + 0.10 * citation_scores
+        0.50 * normalized_semantic
+        + 0.20 * citation_scores
         + 0.10 * recency_scores
-        + 0.10 * co_citation_scores
+        + 0.20 * co_citation_scores
     )
     
     top_idx = np.argsort(final_scores)[::-1][:top_n]
@@ -445,7 +431,7 @@ The output MUST be in Korean and strictly follow the format below. Separate the 
 {papers_info}
 
 Format:
-- 초록 요약 [N]: [간단한 설명] 
+- 초록 요약 [N]: [간단한 설명] \n
 - 논문 추천 근거 [N]: [간단한 설명]
 ###END_OF_PAPER_ANALYSIS###
 """
@@ -465,39 +451,29 @@ Format:
 # 챗봇 입력 처리
 # ========================================
 def chat_with_user(user_input):
-    # 🟢 Step 1. 입력을 영어로 번역
-    user_input_en = to_english(user_input)
-
     with st.spinner("지금 arXiv에서 관련 논문을 검색하고 있습니다..."):
-        # 🟢 Step 2. 영어 번역된 쿼리로 검색
-        papers_df = fetch_arxiv_papers(user_input_en, max_results=50)
-
+        papers_df = fetch_arxiv_papers(user_input, max_results=50)  # 50개로 증가
+        
     if papers_df.empty:
         response = "죄송합니다. 해당 주제의 논문을 찾을 수 없습니다. 다른 키워드로 시도해 주세요."
         st.session_state.messages.append({"role": "assistant", "content": response})
-        st.rerun()
+        st.rerun() 
         return
-
-    # 🟢 Step 3. 영어 쿼리로 임베딩 계산
-    query_embedding = model.encode(user_input_en)
-
+        
+    query_embedding = model.encode(user_input)
+    
     with st.spinner("지금 Semantic Scholar에서 인용 정보 및 공동인용 분석 중..."):
         rec_papers, scores, semantic_sim, citations, recency, co_citation = (
             calculate_recommendation_score(papers_df, query_embedding, top_n=5)
         )
-
+        
     with st.spinner("지금 LLM이 추천 이유를 분석하고 있습니다..."):
         explanation = generate_recommendation_explanation(user_input, rec_papers)
-
-    # 🟢 Step 4. 안내 문구에 번역 내용 표시
-    response = (
-        f"**'{user_input}'** → **'{user_input_en}'**(영어 번역)으로 검색했습니다.\n"
-        f"관련 추천 논문 {len(rec_papers)}개를 찾았습니다. 아래에서 상세 정보를 확인해 주세요."
-    )
-
+        
+    response = f"**'{user_input}'** 관련 추천 논문 {len(rec_papers)}개를 찾았습니다! 아래에서 상세 정보와 LLM 분석 결과를 확인해 주세요."
+    
     st.session_state.messages.append({"role": "assistant", "content": response})
-
-    # 결과 저장 및 화면 갱신은 동일
+    
     st.session_state.last_papers = rec_papers
     st.session_state.last_scores = scores
     st.session_state.last_semantic_sim = semantic_sim
@@ -505,7 +481,7 @@ def chat_with_user(user_input):
     st.session_state.last_recency = recency
     st.session_state.last_co_citation = co_citation
     st.session_state.last_explanation = explanation
-
+    
     st.rerun()
 
 # ========================================
@@ -518,7 +494,7 @@ if message_count > 0:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-user_query = st.chat_input("관심 있는 분야나 논문 주제를 입력하세요.", key="paper_recommender_chat_input") # key 추가
+user_query = st.chat_input("관심 있는 분야나 논문 주제를 입력하세요(영어로 입력하는 것이 검색 정확도에 유리합니다).")
 
 if user_query:
     st.session_state.messages.append({"role": "user", "content": user_query})
@@ -554,7 +530,7 @@ if st.session_state.last_papers is not None and not st.session_state.last_papers
                 st.metric("인용 기반 점수", f"{citations[idx]:.3f}")
                 st.metric("최신성 점수", f"{recency[idx]:.3f}")
                 st.metric("공동 인용 점수", f"{co_citation[idx]:.3f}",
-                         help="시드 논문들과 함께 인용되는 빈도를 기반으로 계산한 유사도입니다.")
+                        help="시드 논문들과 함께 인용되는 빈도를 기반으로 계산한 유사도입니다.")
             
             paper_url = f"https://arxiv.org/abs/{row['arxiv_id']}"
             st.markdown(f"[arXiv에서 보기]({paper_url})")
@@ -572,4 +548,3 @@ if st.session_state.last_explanation:
             if i > 0:
                 st.divider()
             st.markdown(cleaned_part)
-# UI 레이아웃 코드 완성
