@@ -1140,5 +1140,3 @@ if st.session_state.last_explanation:
         if cleaned_part:
             if i > 0:
                 st.divider()
->>>>>>> ddc311f (first commit)
-            st.markdown(cleaned_part)
