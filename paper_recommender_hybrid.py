@@ -9,6 +9,7 @@ from datetime import datetime
 from groq import Groq
 import os
 import time
+import math
 
 # ========================================
 # Groq API 설정
@@ -36,6 +37,8 @@ if "messages" not in st.session_state:
     st.session_state.messages = []
 if "papers_cache" not in st.session_state:
     st.session_state.papers_cache = {}
+if "citations_cache" not in st.session_state:
+    st.session_state.citations_cache = {}
 if "last_papers" not in st.session_state:
     st.session_state.last_papers = None
 if "last_scores" not in st.session_state:
@@ -140,43 +143,47 @@ def fetch_semanticscholar_info(title, arxiv_id):
             "found_by": found_by
         }
         st.session_state.papers_cache[cache_key] = result
-        time.sleep(0.15)  # API 제한 완화
+        time.sleep(0.15)
         return result
     
     st.session_state.papers_cache[cache_key] = default_result
     return default_result
 
 # ========================================
-# 특정 논문의 citations 가져오기 (개선: 에러 핸들링 + 재시도)
+# 개선된 인용 정보 가져오기 (캐싱 + 재시도)
 # ========================================
-def fetch_paper_citations(paper_id, limit=100, max_retries=2):
+def get_citing_papers(paper_id, max_retries=2):
     """
-    특정 논문을 인용한 논문의 ID 리스트 반환 (재시도 로직 추가)
+    특정 논문을 인용한 논문의 ID 집합 반환 (캐싱 적용)
     """
     if not paper_id:
-        return []
+        return set()
+    
+    # 캐시 확인
+    if paper_id in st.session_state.citations_cache:
+        return st.session_state.citations_cache[paper_id]
     
     for attempt in range(max_retries):
         try:
-            url = f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}/citations"
+            url = f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}"
             params = {
-                "fields": "paperId",
-                "limit": limit
+                "fields": "citations.paperId",
             }
             res = requests.get(url, params=params, timeout=8)
             
             if res.status_code == 200:
                 data = res.json()
-                citing_papers = []
-                for item in data.get("data", []):
-                    citing_paper = item.get("citingPaper", {})
-                    if citing_paper.get("paperId"):
-                        citing_papers.append(citing_paper["paperId"])
+                citing_papers = {
+                    c["paperId"] for c in data.get("citations", []) 
+                    if c.get("paperId")
+                }
                 
-                time.sleep(0.2)  # API 제한 완화
+                # 캐시에 저장
+                st.session_state.citations_cache[paper_id] = citing_papers
+                time.sleep(0.2)
                 return citing_papers
                 
-            elif res.status_code == 429:  # Too Many Requests
+            elif res.status_code == 429:
                 wait_time = (attempt + 1) * 2
                 time.sleep(wait_time)
                 continue
@@ -185,116 +192,100 @@ def fetch_paper_citations(paper_id, limit=100, max_retries=2):
             if attempt < max_retries - 1:
                 time.sleep(1)
                 continue
-            
-    return []
+    
+    # 실패 시 빈 집합 캐싱
+    st.session_state.citations_cache[paper_id] = set()
+    return set()
 
 # ========================================
-# 공동인용 점수 계산 (개선버전)
+# 두 논문 간 공동인용 점수 계산
 # ========================================
-def build_co_citation_scores(paper_ids, limit=100, similarity_metric="jaccard", seed_window=5):
+def cocite_score(a_id, b_id):
     """
-    개선된 공동인용 점수 계산
-    - API 호출 최소화
-    - 에러 핸들링 강화
-    - 진행상황 표시
+    두 논문 간 공동 인용 점수 (코사인 유사도 방식)
+    """
+    A = get_citing_papers(a_id)
+    B = get_citing_papers(b_id)
+    
+    if not A or not B:
+        return 0.0
+    
+    n_common = len(A & B)
+    return n_common / math.sqrt(len(A) * len(B))
+
+# ========================================
+# Seed-based 공동인용 점수 계산 (개선 버전)
+# ========================================
+def seed_based_cocitation_score(candidate_id, seed_ids):
+    """
+    시드 논문 집합 기반 공동 인용 점수
+    각 시드 논문과의 공동인용 점수를 평균내어 반환
+    """
+    if not candidate_id or not seed_ids:
+        return 0.0
+    
+    scores = []
+    for seed_id in seed_ids:
+        if candidate_id == seed_id:  # 자기 자신은 제외
+            continue
+        score = cocite_score(candidate_id, seed_id)
+        if score > 0:
+            scores.append(score)
+    
+    return sum(scores) / len(scores) if scores else 0.0
+
+# ========================================
+# 공동인용 점수 계산 (Seed-based 방식)
+# ========================================
+def build_seed_based_co_citation_scores(paper_ids, seed_window=5):
+    """
+    개선된 Seed-based 공동인용 점수 계산
+    - 상위 N개를 시드로 선정
+    - 각 후보 논문과 시드들 간의 공동인용 점수를 계산
     """
     if not paper_ids:
         return np.zeros(len(paper_ids))
 
-    # 1단계: 시드 논문 선정 (유효한 paper_id가 있는 상위 N개)
-    valid_seed_indices = []
-    for idx, pid in enumerate(paper_ids[:seed_window]):
-        if pid:
-            valid_seed_indices.append(idx)
+    # 1단계: 시드 논문 선정
+    valid_seed_ids = [pid for pid in paper_ids[:seed_window] if pid]
     
-    if not valid_seed_indices:
-        st.warning(" 유효한 시드 논문을 찾을 수 없어 공동인용 분석을 건너뜁니다.")
+    if not valid_seed_ids:
+        st.warning("⚠️ 유효한 시드 논문을 찾을 수 없어 공동인용 분석을 건너뜁니다.")
         return np.zeros(len(paper_ids))
     
-    # 2단계: 시드 논문들의 인용 정보만 가져오기 (API 호출 최소화)
-    st.info(f" {len(valid_seed_indices)}개 시드 논문의 인용 정보를 수집 중...")
-    seed_citation_sets = []
+    st.info(f"🌱 상위 {len(valid_seed_ids)}개 논문을 시드로 선정")
     
-    for idx in valid_seed_indices:
-        pid = paper_ids[idx]
-        citations = fetch_paper_citations(pid, limit=limit)
-        
-        if citations:
-            seed_citation_sets.append(set(citations))
-            st.caption(f"   시드 논문 {idx+1}: {len(citations)}개 인용 발견")
-        else:
-            seed_citation_sets.append(set())
-            st.caption(f"   시드 논문 {idx+1}: 인용 정보 없음")
+    # 2단계: 시드 논문들의 인용 정보 수집 (캐싱됨)
+    st.info(f"🔍 {len(valid_seed_ids)}개 시드 논문의 인용 정보 수집 중...")
+    for idx, seed_id in enumerate(valid_seed_ids):
+        citing_count = len(get_citing_papers(seed_id))
+        st.caption(f"   ✓ 시드 {idx+1}: {citing_count}개 인용 발견")
     
-    # 모든 시드의 인용 집합이 비어있으면 종료
-    if all(len(s) == 0 for s in seed_citation_sets):
-        st.warning("시드 논문들의 인용 정보를 가져올 수 없어 공동인용 분석을 건너뜁니다.")
-        return np.zeros(len(paper_ids))
-    
-    # 3단계: 모든 후보 논문의 인용 정보 수집
-    st.info(f"🔍 {len(paper_ids)}개 후보 논문의 인용 정보를 수집 중...")
-    all_citation_sets = []
-    
-    for idx, pid in enumerate(paper_ids):
-        if pid:
-            # 시드 논문은 이미 수집했으므로 재사용
-            if idx in valid_seed_indices:
-                seed_idx = valid_seed_indices.index(idx)
-                all_citation_sets.append(seed_citation_sets[seed_idx])
-            else:
-                citations = fetch_paper_citations(pid, limit=limit)
-                all_citation_sets.append(set(citations) if citations else set())
-        else:
-            all_citation_sets.append(set())
-        
-        # 진행상황 표시 (10개마다)
-        if (idx + 1) % 10 == 0:
-            st.caption(f"   처리 중: {idx+1}/{len(paper_ids)}")
-    
-    # 4단계: 각 후보 논문과 시드 논문들 간의 공동인용 유사도 계산
+    # 3단계: 모든 후보 논문의 공동인용 점수 계산
+    st.info(f"⚙️ {len(paper_ids)}개 후보 논문의 공동인용 점수 계산 중...")
     scores = []
     
-    for i in range(len(paper_ids)):
-        candidate_set = all_citation_sets[i]
-        
-        if not candidate_set:
+    for idx, candidate_id in enumerate(paper_ids):
+        if not candidate_id:
             scores.append(0.0)
             continue
         
-        # 시드 논문들과의 평균 유사도 계산
-        similarities = []
-        for seed_idx in valid_seed_indices:
-            if seed_idx == i:  # 자기 자신은 제외
-                continue
-                
-            seed_set = all_citation_sets[seed_idx]
-            if not seed_set:
-                continue
-            
-            # Jaccard 유사도 계산
-            intersection = len(candidate_set & seed_set)
-            union = len(candidate_set | seed_set)
-            
-            if union > 0:
-                if similarity_metric == "cosine":
-                    sim = intersection / np.sqrt(len(candidate_set) * len(seed_set))
-                else:  # jaccard
-                    sim = intersection / union
-                similarities.append(sim)
+        score = seed_based_cocitation_score(candidate_id, valid_seed_ids)
+        scores.append(score)
         
-        # 평균 유사도
-        avg_sim = float(np.mean(similarities)) if similarities else 0.0
-        scores.append(avg_sim)
+        # 진행상황 표시
+        if (idx + 1) % 5 == 0:
+            st.caption(f"   처리 중: {idx+1}/{len(paper_ids)}")
     
-    # 5단계: 정규화 (0-1 범위)
+    # 4단계: 정규화
     scores = np.array(scores)
     max_score = scores.max()
     
     if max_score > 0:
         scores = scores / max_score
-        st.success(f"✓ 공동인용 분석 완료! (최대 유사도: {max_score:.4f})")
+        st.success(f"✓ Seed-based 공동인용 분석 완료! (최대 점수: {max_score:.4f})")
     else:
-        st.warning("유의미한 공동인용 패턴을 찾지 못했습니다.")
+        st.warning("⚠️ 유의미한 공동인용 패턴을 찾지 못했습니다.")
     
     return scores
 
@@ -344,12 +335,12 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         semantic_scores = semantic_scores[top_15_idx]
         embeddings = embeddings[top_15_idx]
         
-        st.success(f"상위 15개 후보로 압축 완료 (인용수 범위: {quick_citation_scores[top_15_idx].min():.0f}~{quick_citation_scores[top_15_idx].max():.0f}회)")
+        st.success(f"✓ 상위 15개 후보로 압축 완료 (인용수 범위: {quick_citation_scores[top_15_idx].min():.0f}~{quick_citation_scores[top_15_idx].max():.0f}회)")
     
     # ============================================================
     # 2단계: 정밀 분석 (공동인용 포함)
     # ============================================================
-    st.info("정밀 분석 시작...")
+    st.info("🔍 2단계: 정밀 분석 시작...")
     
     # Semantic Scholar 정보 다시 가져오기 (캐시 활용)
     citation_scores = []
@@ -372,10 +363,10 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         recency_score = max(1 - (days_old / 3650), 0)
         recency_scores.append(recency_score)
     
-    # 공동 인용 기반 점수 계산
+    # Seed-based 공동인용 점수 계산
     st.divider()
-    co_citation_scores = build_co_citation_scores(
-        paper_ids, limit=100, similarity_metric="jaccard", seed_window=5
+    co_citation_scores = build_seed_based_co_citation_scores(
+        paper_ids, seed_window=5
     )
     
     # 최종 점수 계산
@@ -452,7 +443,7 @@ Format:
 # ========================================
 def chat_with_user(user_input):
     with st.spinner("지금 arXiv에서 관련 논문을 검색하고 있습니다..."):
-        papers_df = fetch_arxiv_papers(user_input, max_results=50)  # 50개로 증가
+        papers_df = fetch_arxiv_papers(user_input, max_results=50)
         
     if papers_df.empty:
         response = "죄송합니다. 해당 주제의 논문을 찾을 수 없습니다. 다른 키워드로 시도해 주세요."
@@ -462,7 +453,7 @@ def chat_with_user(user_input):
         
     query_embedding = model.encode(user_input)
     
-    with st.spinner("지금 Semantic Scholar에서 인용 정보 및 공동인용 분석 중..."):
+    with st.spinner("지금 Semantic Scholar에서 인용 정보 및 Seed-based 공동인용 분석 중..."):
         rec_papers, scores, semantic_sim, citations, recency, co_citation = (
             calculate_recommendation_score(papers_df, query_embedding, top_n=5)
         )
@@ -529,8 +520,8 @@ if st.session_state.last_papers is not None and not st.session_state.last_papers
                 st.metric("의미론적 유사도", f"{semantic_sim[idx]:.3f}")
                 st.metric("인용 기반 점수", f"{citations[idx]:.3f}")
                 st.metric("최신성 점수", f"{recency[idx]:.3f}")
-                st.metric("공동 인용 점수", f"{co_citation[idx]:.3f}",
-                        help="시드 논문들과 함께 인용되는 빈도를 기반으로 계산한 유사도입니다.")
+                st.metric("Seed-based 공동인용", f"{co_citation[idx]:.3f}",
+                        help="상위 시드 논문들과의 평균 공동인용 점수입니다. 시드와 함께 인용되는 빈도를 기반으로 계산됩니다.")
             
             paper_url = f"https://arxiv.org/abs/{row['arxiv_id']}"
             st.markdown(f"[arXiv에서 보기]({paper_url})")
