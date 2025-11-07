@@ -150,11 +150,11 @@ def fetch_semanticscholar_info(title, arxiv_id):
     return default_result
 
 # ========================================
-# 개선된 인용 정보 가져오기 (캐싱 + 재시도)
+# 개선된 참고문헌 정보 가져오기 (캐싱 + 재시도)
 # ========================================
-def get_citing_papers(paper_id, max_retries=2):
+def get_referenced_papers(paper_id, max_retries=2):
     """
-    특정 논문을 인용한 논문의 ID 집합 반환 (캐싱 적용)
+    특정 논문이 참고한 논문의 ID 집합 반환 (캐싱 적용)
     """
     if not paper_id:
         return set()
@@ -167,21 +167,21 @@ def get_citing_papers(paper_id, max_retries=2):
         try:
             url = f"https://api.semanticscholar.org/graph/v1/paper/{paper_id}"
             params = {
-                "fields": "citations.paperId",
+                "fields": "references.paperId",
             }
             res = requests.get(url, params=params, timeout=8)
             
             if res.status_code == 200:
                 data = res.json()
-                citing_papers = {
-                    c["paperId"] for c in data.get("citations", []) 
-                    if c.get("paperId")
+                referenced_papers = {
+                    ref["paperId"] for ref in data.get("references", []) 
+                    if ref.get("paperId")
                 }
                 
                 # 캐시에 저장
-                st.session_state.citations_cache[paper_id] = citing_papers
+                st.session_state.citations_cache[paper_id] = referenced_papers
                 time.sleep(0.2)
-                return citing_papers
+                return referenced_papers
                 
             elif res.status_code == 429:
                 wait_time = (attempt + 1) * 2
@@ -198,14 +198,15 @@ def get_citing_papers(paper_id, max_retries=2):
     return set()
 
 # ========================================
-# 두 논문 간 공동인용 점수 계산
+# 두 논문 간 공동참고 점수 계산 (Bibliographic Coupling)
 # ========================================
 def cocite_score(a_id, b_id):
     """
-    두 논문 간 공동 인용 점수 (코사인 유사도 방식)
+    두 논문 간 공동 참고문헌 점수 (Bibliographic Coupling)
+    두 논문이 공통으로 인용하는 논문의 수를 기반으로 계산
     """
-    A = get_citing_papers(a_id)
-    B = get_citing_papers(b_id)
+    A = get_referenced_papers(a_id)
+    B = get_referenced_papers(b_id)
     
     if not A or not B:
         return 0.0
@@ -214,12 +215,12 @@ def cocite_score(a_id, b_id):
     return n_common / math.sqrt(len(A) * len(B))
 
 # ========================================
-# Seed-based 공동인용 점수 계산 (개선 버전)
+# Seed-based 공동참고 점수 계산 (개선 버전)
 # ========================================
 def seed_based_cocitation_score(candidate_id, seed_ids):
     """
-    시드 논문 집합 기반 공동 인용 점수
-    각 시드 논문과의 공동인용 점수를 평균내어 반환
+    시드 논문 집합 기반 공동 참고문헌 점수 (Bibliographic Coupling)
+    각 시드 논문과의 공동참고 점수를 평균내어 반환
     """
     if not candidate_id or not seed_ids:
         return 0.0
@@ -235,13 +236,13 @@ def seed_based_cocitation_score(candidate_id, seed_ids):
     return sum(scores) / len(scores) if scores else 0.0
 
 # ========================================
-# 공동인용 점수 계산 (Seed-based 방식)
+# 공동참고 점수 계산 (Seed-based Bibliographic Coupling)
 # ========================================
 def build_seed_based_co_citation_scores(paper_ids, seed_window=5):
     """
-    개선된 Seed-based 공동인용 점수 계산
+    개선된 Seed-based 공동참고 점수 계산 (Bibliographic Coupling)
     - 상위 N개를 시드로 선정
-    - 각 후보 논문과 시드들 간의 공동인용 점수를 계산
+    - 각 후보 논문과 시드들 간의 공동참고 점수를 계산
     """
     if not paper_ids:
         return np.zeros(len(paper_ids))
@@ -250,19 +251,19 @@ def build_seed_based_co_citation_scores(paper_ids, seed_window=5):
     valid_seed_ids = [pid for pid in paper_ids[:seed_window] if pid]
     
     if not valid_seed_ids:
-        st.warning("⚠️ 유효한 시드 논문을 찾을 수 없어 공동인용 분석을 건너뜁니다.")
+        st.warning("⚠️ 유효한 시드 논문을 찾을 수 없어 공동참고 분석을 건너뜁니다.")
         return np.zeros(len(paper_ids))
     
     st.info(f"🌱 상위 {len(valid_seed_ids)}개 논문을 시드로 선정")
     
-    # 2단계: 시드 논문들의 인용 정보 수집 (캐싱됨)
-    st.info(f"🔍 {len(valid_seed_ids)}개 시드 논문의 인용 정보 수집 중...")
+    # 2단계: 시드 논문들의 참고문헌 정보 수집 (캐싱됨)
+    st.info(f"🔍 {len(valid_seed_ids)}개 시드 논문의 참고문헌 정보 수집 중...")
     for idx, seed_id in enumerate(valid_seed_ids):
-        citing_count = len(get_citing_papers(seed_id))
-        st.caption(f"   ✓ 시드 {idx+1}: {citing_count}개 인용 발견")
+        ref_count = len(get_referenced_papers(seed_id))
+        st.caption(f"   ✓ 시드 {idx+1}: {ref_count}개 참고문헌 발견")
     
-    # 3단계: 모든 후보 논문의 공동인용 점수 계산
-    st.info(f"⚙️ {len(paper_ids)}개 후보 논문의 공동인용 점수 계산 중...")
+    # 3단계: 모든 후보 논문의 공동참고 점수 계산
+    st.info(f"⚙️ {len(paper_ids)}개 후보 논문의 공동참고 점수 계산 중...")
     scores = []
     
     for idx, candidate_id in enumerate(paper_ids):
@@ -283,9 +284,9 @@ def build_seed_based_co_citation_scores(paper_ids, seed_window=5):
     
     if max_score > 0:
         scores = scores / max_score
-        st.success(f"✓ Seed-based 공동인용 분석 완료! (최대 점수: {max_score:.4f})")
+        st.success(f"✓ Seed-based 공동참고 분석 완료! (최대 점수: {max_score:.4f})")
     else:
-        st.warning("⚠️ 유의미한 공동인용 패턴을 찾지 못했습니다.")
+        st.warning("⚠️ 유의미한 공동참고 패턴을 찾지 못했습니다.")
     
     return scores
 
@@ -363,7 +364,7 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         recency_score = max(1 - (days_old / 3650), 0)
         recency_scores.append(recency_score)
     
-    # Seed-based 공동인용 점수 계산
+    # Seed-based 공동참고 점수 계산
     st.divider()
     co_citation_scores = build_seed_based_co_citation_scores(
         paper_ids, seed_window=5
@@ -380,7 +381,7 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
     else:
         normalized_semantic = semantic_scores
     
-    # 최종 가중치: 의미(50%) + 인용(20%) + 최신성(10%) + 공동인용(20%)
+    # 최종 가중치: 의미(50%) + 인용(20%) + 최신성(10%) + 공동참고(20%)
     final_scores = (
         0.50 * normalized_semantic
         + 0.20 * citation_scores
@@ -415,7 +416,7 @@ def generate_recommendation_explanation(user_query, recommended_papers):
     
     prompt = f"""The user is interested in the following field: "{user_query}"
 
-Analyze the abstracts of the recommended papers below. The 'Co-citation Score' reflects how frequently the candidate is cited together with the seed papers across the literature. Provide a concise abstract summary and a professional explanation of why the paper was recommended.
+Analyze the abstracts of the recommended papers below. The 'Co-citation Score' reflects bibliographic coupling - how many references the candidate shares with the seed papers. Provide a concise abstract summary and a professional explanation of why the paper was recommended.
 
 The output MUST be in Korean and strictly follow the format below. Separate the analysis of each paper using the exact phrase: ###END_OF_PAPER_ANALYSIS###
 
@@ -453,7 +454,7 @@ def chat_with_user(user_input):
         
     query_embedding = model.encode(user_input)
     
-    with st.spinner("지금 Semantic Scholar에서 인용 정보 및 Seed-based 공동인용 분석 중..."):
+    with st.spinner("지금 Semantic Scholar에서 인용 정보 및 Seed-based 공동참고 분석 중..."):
         rec_papers, scores, semantic_sim, citations, recency, co_citation = (
             calculate_recommendation_score(papers_df, query_embedding, top_n=5)
         )
@@ -520,8 +521,8 @@ if st.session_state.last_papers is not None and not st.session_state.last_papers
                 st.metric("의미론적 유사도", f"{semantic_sim[idx]:.3f}")
                 st.metric("인용 기반 점수", f"{citations[idx]:.3f}")
                 st.metric("최신성 점수", f"{recency[idx]:.3f}")
-                st.metric("Seed-based 공동인용", f"{co_citation[idx]:.3f}",
-                        help="상위 시드 논문들과의 평균 공동인용 점수입니다. 시드와 함께 인용되는 빈도를 기반으로 계산됩니다.")
+                st.metric("Seed-based 공동참고", f"{co_citation[idx]:.3f}",
+                        help="상위 시드 논문들과의 평균 공동참고 점수입니다. 시드와 공통으로 인용하는 논문의 수를 기반으로 계산됩니다 (Bibliographic Coupling).")
             
             paper_url = f"https://arxiv.org/abs/{row['arxiv_id']}"
             st.markdown(f"[arXiv에서 보기]({paper_url})")
