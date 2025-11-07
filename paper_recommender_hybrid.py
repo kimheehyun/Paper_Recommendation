@@ -208,11 +208,11 @@ def build_co_citation_scores(paper_ids, limit=100, similarity_metric="jaccard", 
             valid_seed_indices.append(idx)
     
     if not valid_seed_indices:
-        st.warning("⚠️ 유효한 시드 논문을 찾을 수 없어 공동인용 분석을 건너뜁니다.")
+        st.warning(" 유효한 시드 논문을 찾을 수 없어 공동인용 분석을 건너뜁니다.")
         return np.zeros(len(paper_ids))
     
     # 2단계: 시드 논문들의 인용 정보만 가져오기 (API 호출 최소화)
-    st.info(f"🔍 {len(valid_seed_indices)}개 시드 논문의 인용 정보를 수집 중...")
+    st.info(f" {len(valid_seed_indices)}개 시드 논문의 인용 정보를 수집 중...")
     seed_citation_sets = []
     
     for idx in valid_seed_indices:
@@ -221,14 +221,14 @@ def build_co_citation_scores(paper_ids, limit=100, similarity_metric="jaccard", 
         
         if citations:
             seed_citation_sets.append(set(citations))
-            st.caption(f"   ✓ 시드 논문 {idx+1}: {len(citations)}개 인용 발견")
+            st.caption(f"   시드 논문 {idx+1}: {len(citations)}개 인용 발견")
         else:
             seed_citation_sets.append(set())
-            st.caption(f"   ✗ 시드 논문 {idx+1}: 인용 정보 없음")
+            st.caption(f"   시드 논문 {idx+1}: 인용 정보 없음")
     
     # 모든 시드의 인용 집합이 비어있으면 종료
     if all(len(s) == 0 for s in seed_citation_sets):
-        st.warning("⚠️ 시드 논문들의 인용 정보를 가져올 수 없어 공동인용 분석을 건너뜁니다.")
+        st.warning("시드 논문들의 인용 정보를 가져올 수 없어 공동인용 분석을 건너뜁니다.")
         return np.zeros(len(paper_ids))
     
     # 3단계: 모든 후보 논문의 인용 정보 수집
@@ -294,7 +294,7 @@ def build_co_citation_scores(paper_ids, limit=100, similarity_metric="jaccard", 
         scores = scores / max_score
         st.success(f"✓ 공동인용 분석 완료! (최대 유사도: {max_score:.4f})")
     else:
-        st.warning("⚠️ 유의미한 공동인용 패턴을 찾지 못했습니다.")
+        st.warning("유의미한 공동인용 패턴을 찾지 못했습니다.")
     
     return scores
 
@@ -344,12 +344,12 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         semantic_scores = semantic_scores[top_15_idx]
         embeddings = embeddings[top_15_idx]
         
-        st.success(f"✓ 상위 15개 후보로 압축 완료 (인용수 범위: {quick_citation_scores[top_15_idx].min():.0f}~{quick_citation_scores[top_15_idx].max():.0f}회)")
+        st.success(f"상위 15개 후보로 압축 완료 (인용수 범위: {quick_citation_scores[top_15_idx].min():.0f}~{quick_citation_scores[top_15_idx].max():.0f}회)")
     
     # ============================================================
     # 2단계: 정밀 분석 (공동인용 포함)
     # ============================================================
-    st.info("🔍 2단계: 정밀 분석 시작...")
+    st.info("정밀 분석 시작...")
     
     # Semantic Scholar 정보 다시 가져오기 (캐시 활용)
     citation_scores = []
