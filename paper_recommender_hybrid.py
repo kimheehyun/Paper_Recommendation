@@ -251,19 +251,19 @@ def build_seed_based_co_citation_scores(paper_ids, seed_window=5):
     valid_seed_ids = [pid for pid in paper_ids[:seed_window] if pid]
     
     if not valid_seed_ids:
-        st.warning("⚠️ 유효한 시드 논문을 찾을 수 없어 공동참고 분석을 건너뜁니다.")
+        st.warning("유효한 시드 논문을 찾을 수 없어 공동참고 분석을 건너뜁니다.")
         return np.zeros(len(paper_ids))
     
-    st.info(f"🌱 상위 {len(valid_seed_ids)}개 논문을 시드로 선정")
+    st.info(f"상위 {len(valid_seed_ids)}개 논문을 시드로 선정")
     
     # 2단계: 시드 논문들의 참고문헌 정보 수집 (캐싱됨)
-    st.info(f"🔍 {len(valid_seed_ids)}개 시드 논문의 참고문헌 정보 수집 중...")
+    st.info(f" {len(valid_seed_ids)}개 시드 논문의 참고문헌 정보 수집 중...")
     for idx, seed_id in enumerate(valid_seed_ids):
         ref_count = len(get_referenced_papers(seed_id))
-        st.caption(f"   ✓ 시드 {idx+1}: {ref_count}개 참고문헌 발견")
+        st.caption(f"    시드 {idx+1}: {ref_count}개 참고문헌 발견")
     
     # 3단계: 모든 후보 논문의 공동참고 점수 계산
-    st.info(f"⚙️ {len(paper_ids)}개 후보 논문의 공동참고 점수 계산 중...")
+    st.info(f" {len(paper_ids)}개 후보 논문의 공동참고 점수 계산 중...")
     scores = []
     
     for idx, candidate_id in enumerate(paper_ids):
@@ -276,7 +276,7 @@ def build_seed_based_co_citation_scores(paper_ids, seed_window=5):
         
         # 진행상황 표시
         if (idx + 1) % 5 == 0:
-            st.caption(f"   처리 중: {idx+1}/{len(paper_ids)}")
+            st.caption(f"    처리 중: {idx+1}/{len(paper_ids)}")
     
     # 4단계: 정규화
     scores = np.array(scores)
@@ -284,9 +284,9 @@ def build_seed_based_co_citation_scores(paper_ids, seed_window=5):
     
     if max_score > 0:
         scores = scores / max_score
-        st.success(f"✓ Seed-based 공동참고 분석 완료! (최대 점수: {max_score:.4f})")
+        st.success(f"Seed-based 공동참고 분석 완료! (최대 점수: {max_score:.4f})")
     else:
-        st.warning("⚠️ 유의미한 공동참고 패턴을 찾지 못했습니다.")
+        st.warning("유의미한 공동참고 패턴을 찾지 못했습니다.")
     
     return scores
 
@@ -312,7 +312,7 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
     # 1단계: 빠른 필터링 (인용수 + 의미론적 유사도로 후보 압축)
     # ============================================================
     if use_two_stage and len(papers_df) > 15:
-        st.info("🔍 1단계: 인용수 기반 사전 필터링 중...")
+        st.info("1단계: 인용수 기반 사전 필터링 중...")
         
         # Semantic Scholar 정보 가져오기 (빠른 필터링용)
         quick_citation_scores = []
@@ -336,12 +336,12 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         semantic_scores = semantic_scores[top_15_idx]
         embeddings = embeddings[top_15_idx]
         
-        st.success(f"✓ 상위 15개 후보로 압축 완료 (인용수 범위: {quick_citation_scores[top_15_idx].min():.0f}~{quick_citation_scores[top_15_idx].max():.0f}회)")
+        st.success(f"상위 15개 후보로 압축 완료 (인용수 범위: {quick_citation_scores[top_15_idx].min():.0f}~{quick_citation_scores[top_15_idx].max():.0f}회)")
     
     # ============================================================
     # 2단계: 정밀 분석 (공동인용 포함)
     # ============================================================
-    st.info("🔍 2단계: 정밀 분석 시작...")
+    st.info("2단계: 정밀 분석 시작...")
     
     # Semantic Scholar 정보 다시 가져오기 (캐시 활용)
     citation_scores = []
@@ -405,6 +405,27 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
     return result_df, result_scores, semantic_sim, citations, recency, co_citation
 
 # ========================================
+# LLM 영어 번역 (⭐ 추가된 함수)
+# ========================================
+def translate_to_english(korean_text):
+    """Groq API를 사용하여 한국어 텍스트를 영어로 번역합니다."""
+    prompt = f"Translate the following Korean text to English. Respond ONLY with the English translation, nothing else.\n\nKorean Text: {korean_text}"
+    
+    try:
+        message = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=100,
+            temperature=0.0,
+        )
+        # 응답 텍스트의 앞뒤 공백을 제거하고 반환
+        return message.choices[0].message.content.strip()
+    except Exception as e:
+        st.error(f"번역 오류: {str(e)}")
+        # 오류 발생 시 원본 텍스트를 그대로 반환
+        return korean_text
+
+# ========================================
 # LLM 설명 생성
 # ========================================
 def generate_recommendation_explanation(user_query, recommended_papers):
@@ -440,19 +461,29 @@ Format:
         return f"LLM 설명 생성 오류: {str(e)}"
 
 # ========================================
-# 챗봇 입력 처리
+# 챗봇 입력 처리 (⭐ 수정된 함수)
 # ========================================
 def chat_with_user(user_input):
+    
+    # 1. 한국어 쿼리를 영어로 번역
+    with st.spinner(f"'{user_input}'을(를) 검색을 위해 영어로 번역 중..."):
+        translated_query = translate_to_english(user_input)
+        if translated_query == user_input:
+            st.warning("번역에 실패하여 원본 쿼리를 사용합니다.")
+        else:
+            st.info(f"번역된 검색 쿼리: **{translated_query}**")
+            
+    # 2. 번역된 쿼리로 arXiv 논문 검색
     with st.spinner("지금 arXiv에서 관련 논문을 검색하고 있습니다..."):
-        papers_df = fetch_arxiv_papers(user_input, max_results=50)
+        papers_df = fetch_arxiv_papers(translated_query, max_results=50) # translated_query 사용
         
     if papers_df.empty:
         response = "죄송합니다. 해당 주제의 논문을 찾을 수 없습니다. 다른 키워드로 시도해 주세요."
         st.session_state.messages.append({"role": "assistant", "content": response})
-        st.rerun() 
+        st.rerun()  
         return
         
-    query_embedding = model.encode(user_input)
+    query_embedding = model.encode(translated_query) # 임베딩도 번역된 쿼리 사용
     
     with st.spinner("지금 Semantic Scholar에서 인용 정보 및 Seed-based 공동참고 분석 중..."):
         rec_papers, scores, semantic_sim, citations, recency, co_citation = (
@@ -486,7 +517,7 @@ if message_count > 0:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-user_query = st.chat_input("관심 있는 분야나 논문 주제를 입력하세요(영어로 입력하는 것이 검색 정확도에 유리합니다).")
+user_query = st.chat_input("관심 있는 분야나 논문 주제를 입력하세요(영어로 번역되어 검색됩니다).")
 
 if user_query:
     st.session_state.messages.append({"role": "user", "content": user_query})
@@ -522,7 +553,7 @@ if st.session_state.last_papers is not None and not st.session_state.last_papers
                 st.metric("인용 기반 점수", f"{citations[idx]:.3f}")
                 st.metric("최신성 점수", f"{recency[idx]:.3f}")
                 st.metric("Seed-based 공동참고", f"{co_citation[idx]:.3f}",
-                        help="상위 시드 논문들과의 평균 공동참고 점수입니다. 시드와 공통으로 인용하는 논문의 수를 기반으로 계산됩니다 (Bibliographic Coupling).")
+                         help="상위 시드 논문들과의 평균 공동참고 점수입니다. 시드와 공통으로 인용하는 논문의 수를 기반으로 계산됩니다 (Bibliographic Coupling).")
             
             paper_url = f"https://arxiv.org/abs/{row['arxiv_id']}"
             st.markdown(f"[arXiv에서 보기]({paper_url})")
