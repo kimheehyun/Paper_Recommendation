@@ -236,92 +236,34 @@ def seed_based_cocitation_score(candidate_id, seed_ids):
     return sum(scores) / len(scores) if scores else 0.0
 
 # ========================================
-# Influential Citation 기반 시드 선정
-# ========================================
-def select_seed_papers_by_influential_citation(paper_ids, ss_info_list, seed_window=5):
-    """
-    Influential Citation Count를 기준으로 시드 논문 선정
-    
-    Returns:
-        valid_seed_ids: 선정된 시드 논문 ID 리스트
-        seed_info: 시드 논문 정보 (출력용)
-    """
-    if not paper_ids or not ss_info_list:
-        return [], []
-    
-    # influential citation 기준으로 시드 후보 수집
-    seed_candidates = []
-    for i, pid in enumerate(paper_ids):
-        if pid and i < len(ss_info_list):
-            influential_count = ss_info_list[i].get("influential_citation_count", 0)
-            citation_count = ss_info_list[i].get("citation_count", 0)
-            seed_candidates.append({
-                "paper_id": pid,
-                "influential": influential_count,
-                "citations": citation_count,
-                "index": i
-            })
-    
-    if not seed_candidates:
-        return [], []
-    
-    # 1차: influential citation count 내림차순
-    # 2차: citation count 내림차순
-    seed_candidates.sort(
-        key=lambda x: (x["influential"], x["citations"]), 
-        reverse=True
-    )
-    
-    # 상위 seed_window개 선정
-    selected_seeds = seed_candidates[:seed_window]
-    valid_seed_ids = [s["paper_id"] for s in selected_seeds]
-    
-    return valid_seed_ids, selected_seeds
-
-# ========================================
 # 공동참고 점수 계산 (Seed-based Bibliographic Coupling)
 # ========================================
-def build_seed_based_co_citation_scores(paper_ids, ss_info_list, seed_window=5):
+def build_seed_based_co_citation_scores(paper_ids, seed_window=5):
     """
     개선된 Seed-based 공동참고 점수 계산 (Bibliographic Coupling)
-    - Influential Citation Count 기준으로 시드 논문 선정
+    - 상위 N개를 시드로 선정
     - 각 후보 논문과 시드들 간의 공동참고 점수를 계산
     """
     if not paper_ids:
         return np.zeros(len(paper_ids))
 
-    # 1단계: Influential Citation 기준 시드 논문 선정
-    valid_seed_ids, seed_info = select_seed_papers_by_influential_citation(
-        paper_ids, ss_info_list, seed_window
-    )
+    # 1단계: 시드 논문 선정
+    valid_seed_ids = [pid for pid in paper_ids[:seed_window] if pid]
     
     if not valid_seed_ids:
         st.warning("유효한 시드 논문을 찾을 수 없어 공동참고 분석을 건너뜁니다.")
         return np.zeros(len(paper_ids))
     
-    # 시드 정보 출력
-    st.info(f"📌 Influential Citation 기준 상위 {len(valid_seed_ids)}개 논문을 시드로 선정")
-    for i, s in enumerate(seed_info):
-        st.caption(
-            f"    시드 {i+1}: "
-            f"Influential Citations = {s['influential']}, "
-            f"Total Citations = {s['citations']}"
-        )
+    st.info(f"상위 {len(valid_seed_ids)}개 논문을 시드로 선정")
     
     # 2단계: 시드 논문들의 참고문헌 정보 수집 (캐싱됨)
-    st.info(f"📚 {len(valid_seed_ids)}개 시드 논문의 참고문헌 정보 수집 중...")
-    seed_ref_counts = []
+    st.info(f" {len(valid_seed_ids)}개 시드 논문의 참고문헌 정보 수집 중...")
     for idx, seed_id in enumerate(valid_seed_ids):
         ref_count = len(get_referenced_papers(seed_id))
-        seed_ref_counts.append(ref_count)
         st.caption(f"    시드 {idx+1}: {ref_count}개 참고문헌 발견")
     
-    if sum(seed_ref_counts) == 0:
-        st.warning("시드 논문들의 참고문헌 정보를 찾을 수 없습니다.")
-        return np.zeros(len(paper_ids))
-    
     # 3단계: 모든 후보 논문의 공동참고 점수 계산
-    st.info(f"🔍 {len(paper_ids)}개 후보 논문의 공동참고 점수 계산 중...")
+    st.info(f" {len(paper_ids)}개 후보 논문의 공동참고 점수 계산 중...")
     scores = []
     
     for idx, candidate_id in enumerate(paper_ids):
@@ -342,10 +284,7 @@ def build_seed_based_co_citation_scores(paper_ids, ss_info_list, seed_window=5):
     
     if max_score > 0:
         scores = scores / max_score
-        st.success(
-            f"✅ Seed-based 공동참고 분석 완료! "
-            f"(최대 점수: {max_score:.4f}, 평균: {scores.mean():.4f})"
-        )
+        st.success(f"Seed-based 공동참고 분석 완료! (최대 점수: {max_score:.4f})")
     else:
         st.warning("유의미한 공동참고 패턴을 찾지 못했습니다.")
     
@@ -373,7 +312,7 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
     # 1단계: 빠른 필터링 (인용수 + 의미론적 유사도로 후보 압축)
     # ============================================================
     if use_two_stage and len(papers_df) > 15:
-        st.info("🔎 1단계: 인용수 기반 사전 필터링 중...")
+        st.info("1단계: 인용수 기반 사전 필터링 중...")
         
         # Semantic Scholar 정보 가져오기 (빠른 필터링용)
         quick_citation_scores = []
@@ -397,12 +336,12 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         semantic_scores = semantic_scores[top_15_idx]
         embeddings = embeddings[top_15_idx]
         
-        st.success(f"✅ 상위 15개 후보로 압축 완료 (인용수 범위: {quick_citation_scores[top_15_idx].min():.0f}~{quick_citation_scores[top_15_idx].max():.0f}회)")
+        st.success(f"상위 15개 후보로 압축 완료 (인용수 범위: {quick_citation_scores[top_15_idx].min():.0f}~{quick_citation_scores[top_15_idx].max():.0f}회)")
     
     # ============================================================
     # 2단계: 정밀 분석 (공동인용 포함)
     # ============================================================
-    st.info("🎯 2단계: 정밀 분석 시작...")
+    st.info("2단계: 정밀 분석 시작...")
     
     # Semantic Scholar 정보 다시 가져오기 (캐시 활용)
     citation_scores = []
@@ -425,10 +364,10 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         recency_score = max(1 - (days_old / 3650), 0)
         recency_scores.append(recency_score)
     
-    # Seed-based 공동참고 점수 계산 (Influential Citation 기준)
+    # Seed-based 공동참고 점수 계산
     st.divider()
     co_citation_scores = build_seed_based_co_citation_scores(
-        paper_ids, ss_info_list, seed_window=5
+        paper_ids, seed_window=5
     )
     
     # 최종 점수 계산
@@ -460,14 +399,13 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
     
     # 결과에 추가 정보 포함
     result_df["citation_count"] = [ss_info_list[i]["citation_count"] for i in top_idx]
-    result_df["influential_citation_count"] = [ss_info_list[i]["influential_citation_count"] for i in top_idx]
     result_df["found_by"] = [ss_info_list[i]["found_by"] for i in top_idx]
     result_df["co_citation_score"] = co_citation
     
     return result_df, result_scores, semantic_sim, citations, recency, co_citation
 
 # ========================================
-# LLM 영어 번역
+# LLM 영어 번역 (⭐ 추가된 함수)
 # ========================================
 def translate_to_english(korean_text):
     """Groq API를 사용하여 한국어 텍스트를 영어로 번역합니다."""
@@ -480,9 +418,11 @@ def translate_to_english(korean_text):
             max_tokens=100,
             temperature=0.0,
         )
+        # 응답 텍스트의 앞뒤 공백을 제거하고 반환
         return message.choices[0].message.content.strip()
     except Exception as e:
         st.error(f"번역 오류: {str(e)}")
+        # 오류 발생 시 원본 텍스트를 그대로 반환
         return korean_text
 
 # ========================================
@@ -492,13 +432,12 @@ def generate_recommendation_explanation(user_query, recommended_papers):
     papers_info = ""
     for idx, row in recommended_papers.iterrows():
         co_citation_info = f"\nCo-citation Score: {row.get('co_citation_score', 0):.3f}" if row.get('co_citation_score', 0) > 0 else ""
-        influential_info = f"\nInfluential Citations: {row.get('influential_citation_count', 0)}" if row.get('influential_citation_count', 0) > 0 else ""
         
-        papers_info += f"\n---\nPaper {idx+1}: {row['title']}\nAuthors: {row['authors']}\nPublished: {row['published']}\nCitations: {row.get('citation_count', 0)}{influential_info}{co_citation_info}\nAbstract: {row['abstract'][:300]}...\n"
+        papers_info += f"\n---\nPaper {idx+1}: {row['title']}\nAuthors: {row['authors']}\nPublished: {row['published']}\nCitations: {row.get('citation_count', 0)}{co_citation_info}\nAbstract: {row['abstract'][:300]}...\n"
     
     prompt = f"""The user is interested in the following field: "{user_query}"
 
-Analyze the abstracts of the recommended papers below. The 'Co-citation Score' reflects bibliographic coupling - how many references the candidate shares with the seed papers (selected by Influential Citation Count). Provide a concise abstract summary and a professional explanation of why the paper was recommended.
+Analyze the abstracts of the recommended papers below. The 'Co-citation Score' reflects bibliographic coupling - how many references the candidate shares with the seed papers. Provide a concise abstract summary and a professional explanation of why the paper was recommended.
 
 The output MUST be in Korean and strictly follow the format below. Separate the analysis of each paper using the exact phrase: ###END_OF_PAPER_ANALYSIS###
 
@@ -522,7 +461,7 @@ Format:
         return f"LLM 설명 생성 오류: {str(e)}"
 
 # ========================================
-# 챗봇 입력 처리
+# 챗봇 입력 처리 (⭐ 수정된 함수)
 # ========================================
 def chat_with_user(user_input):
     
@@ -532,11 +471,11 @@ def chat_with_user(user_input):
         if translated_query == user_input:
             st.warning("번역에 실패하여 원본 쿼리를 사용합니다.")
         else:
-            st.info(f"🌐 번역된 검색 쿼리: **{translated_query}**")
+            st.info(f"번역된 검색 쿼리: **{translated_query}**")
             
     # 2. 번역된 쿼리로 arXiv 논문 검색
-    with st.spinner("📚 지금 arXiv에서 관련 논문을 검색하고 있습니다..."):
-        papers_df = fetch_arxiv_papers(translated_query, max_results=50)
+    with st.spinner("지금 arXiv에서 관련 논문을 검색하고 있습니다..."):
+        papers_df = fetch_arxiv_papers(translated_query, max_results=50) # translated_query 사용
         
     if papers_df.empty:
         response = "죄송합니다. 해당 주제의 논문을 찾을 수 없습니다. 다른 키워드로 시도해 주세요."
@@ -544,14 +483,14 @@ def chat_with_user(user_input):
         st.rerun()  
         return
         
-    query_embedding = model.encode(translated_query)
+    query_embedding = model.encode(translated_query) # 임베딩도 번역된 쿼리 사용
     
-    with st.spinner("🔗 지금 Semantic Scholar에서 인용 정보 및 Seed-based 공동참고 분석 중..."):
+    with st.spinner("지금 Semantic Scholar에서 인용 정보 및 Seed-based 공동참고 분석 중..."):
         rec_papers, scores, semantic_sim, citations, recency, co_citation = (
             calculate_recommendation_score(papers_df, query_embedding, top_n=5)
         )
         
-    with st.spinner("🤖 지금 LLM이 추천 이유를 분석하고 있습니다..."):
+    with st.spinner("지금 LLM이 추천 이유를 분석하고 있습니다..."):
         explanation = generate_recommendation_explanation(user_input, rec_papers)
         
     response = f"**'{user_input}'** 관련 추천 논문 {len(rec_papers)}개를 찾았습니다! 아래에서 상세 정보와 LLM 분석 결과를 확인해 주세요."
@@ -578,7 +517,7 @@ if message_count > 0:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
 
-user_query = st.chat_input("관심 있는 분야나 논문 주제를 입력하세요 (한국어/영어 모두 가능)")
+user_query = st.chat_input("관심 있는 분야나 논문 주제를 입력하세요(영어로 번역되어 검색됩니다).")
 
 if user_query:
     st.session_state.messages.append({"role": "user", "content": user_query})
@@ -594,7 +533,7 @@ if st.session_state.last_papers is not None and not st.session_state.last_papers
     co_citation = st.session_state.last_co_citation
     
     st.divider()
-    st.subheader("📊 최신 추천 논문 상세 정보")
+    st.subheader("최신 추천 논문 상세 정보")
     
     for idx, row in rec_papers.iterrows():
         with st.expander(f"**{idx+1}. {row['title']}**"):
@@ -606,7 +545,6 @@ if st.session_state.last_papers is not None and not st.session_state.last_papers
                 if row.get('doi'):
                     st.write(f"**DOI:** {row['doi']}")
                 st.write(f"**인용수:** {row.get('citation_count', 0)}회")
-                st.write(f"**Influential Citations:** {row.get('influential_citation_count', 0)}회")
                 st.write(f"**검색방법:** {row.get('found_by', 'N/A')}")
                 st.write(f"\n**초록:**\n{row['abstract']}")
             with col2:
@@ -615,7 +553,7 @@ if st.session_state.last_papers is not None and not st.session_state.last_papers
                 st.metric("인용 기반 점수", f"{citations[idx]:.3f}")
                 st.metric("최신성 점수", f"{recency[idx]:.3f}")
                 st.metric("Seed-based 공동참고", f"{co_citation[idx]:.3f}",
-                         help="Influential Citation 기준 상위 시드 논문들과의 평균 공동참고 점수입니다. 시드와 공통으로 인용하는 논문의 수를 기반으로 계산됩니다 (Bibliographic Coupling).")
+                         help="상위 시드 논문들과의 평균 공동참고 점수입니다. 시드와 공통으로 인용하는 논문의 수를 기반으로 계산됩니다 (Bibliographic Coupling).")
             
             paper_url = f"https://arxiv.org/abs/{row['arxiv_id']}"
             st.markdown(f"[arXiv에서 보기]({paper_url})")
@@ -623,7 +561,7 @@ if st.session_state.last_papers is not None and not st.session_state.last_papers
 # LLM 분석 결과
 if st.session_state.last_explanation:
     st.divider()
-    st.subheader("🤖 최신 LLM 논문 초록 요약 및 추천 분석")
+    st.subheader("최신 LLM 논문 초록 요약 및 추천 분석")
     
     analysis_parts = st.session_state.last_explanation.split("###END_OF_PAPER_ANALYSIS###")
     
