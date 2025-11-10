@@ -439,14 +439,18 @@ def generate_recommendation_explanation(user_query, recommended_papers):
                 
                 You are an academic query optimizer for arXiv.
 
-                Your task: Convert the user's input topic into a clean, precise English query suitable for arXiv search.
+               Your task: Convert the user's input topic into a clear, precise, and academically valid English query suitable for arXiv search — even if the input is vague, colloquial, or unrelated to research.
 
                 Guidelines:
-                - Remove unnecessary words, particles, or colloquial expressions.
-                - Focus on the core technical or academic terms.
-                - Keep it short (3–7 keywords max).
+                - Always produce a query that could realistically return academic papers on arXiv.
+                - If the input is too general or casual, infer the most relevant academic or technical domain.
+                  (e.g., "AI trends" → "artificial intelligence research", 
+                         "how computers think" → "computational cognition", 
+                         "music emotion" → "music information retrieval and affective computing")
+                - Use academic phrasing and common research terminology.
+                - Focus on 3–7 concise keywords.
                 - Use English only.
-                - If applicable, add relevant field keywords (e.g., "deep learning", "reinforcement learning", "graph neural network", "transformer", etc.).
+                - If applicable, add relevant field keywords (e.g., "deep learning", "reinforcement learning", "graph neural network", "transformer", "statistical modeling", etc.).
                 - Return only the optimized English query, nothing else.
 
                 User query: "{user_query}"
