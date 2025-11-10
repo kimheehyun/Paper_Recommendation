@@ -436,6 +436,7 @@ def generate_recommendation_explanation(user_query, recommended_papers):
         papers_info += f"\n---\nPaper {idx+1}: {row['title']}\nAuthors: {row['authors']}\nPublished: {row['published']}\nCitations: {row.get('citation_count', 0)}{co_citation_info}\nAbstract: {row['abstract'][:300]}...\n"
     
     prompt = f"""
+                # STEP 1: 쿼리 정제
                 You are an academic query optimizer for arXiv.
 
                 Your task: Convert the user's input topic into a clean, precise English query suitable for arXiv search.
@@ -452,6 +453,25 @@ def generate_recommendation_explanation(user_query, recommended_papers):
 
                 Output format (strictly):
                 arxiv_query = "optimized English search query"
+                
+                
+                # STEP 2: 논문 분석 및 추천 이유 작성
+                The user is interested in the following field: "{user_query}"
+
+                Analyze the abstracts of the recommended papers below. 
+                The 'Co-citation Score' reflects bibliographic coupling — how many references the candidate shares with the seed papers. 
+
+                Provide a concise abstract summary and a professional explanation of why the paper was recommended.
+
+                The output MUST be in Korean and strictly follow the format below. 
+                Separate the analysis of each paper using the exact phrase: ###END_OF_PAPER_ANALYSIS###
+
+                {papers_info}
+
+                Format:
+                - 초록 요약 [N]: [간단한 설명] \n
+                - 논문 추천 근거 [N]: [간단한 설명]
+                ###END_OF_PAPER_ANALYSIS###
 """
 
     
