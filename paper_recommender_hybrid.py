@@ -61,7 +61,7 @@ def fetch_arxiv_papers(query, max_results=50):
     """max_results를 50으로 증가 (2단계 필터링을 위해)"""
     try:
         client_arxiv = arxiv.Client()
-        search = arxiv.Search(
+        search = arxiv.Search(                     # 기준: Relavance
             query=query, max_results=max_results, sort_by=arxiv.SortCriterion.Relevance
         )
         papers = list(client_arxiv.results(search))
@@ -435,19 +435,25 @@ def generate_recommendation_explanation(user_query, recommended_papers):
         
         papers_info += f"\n---\nPaper {idx+1}: {row['title']}\nAuthors: {row['authors']}\nPublished: {row['published']}\nCitations: {row.get('citation_count', 0)}{co_citation_info}\nAbstract: {row['abstract'][:300]}...\n"
     
-    prompt = f"""The user is interested in the following field: "{user_query}"
+    prompt = f"""
+                You are an academic query optimizer for arXiv.
 
-Analyze the abstracts of the recommended papers below. The 'Co-citation Score' reflects bibliographic coupling - how many references the candidate shares with the seed papers. Provide a concise abstract summary and a professional explanation of why the paper was recommended.
+                Your task: Convert the user's input topic into a clean, precise English query suitable for arXiv search.
 
-The output MUST be in Korean and strictly follow the format below. Separate the analysis of each paper using the exact phrase: ###END_OF_PAPER_ANALYSIS###
+                Guidelines:
+                - Remove unnecessary words, particles, or colloquial expressions.
+                - Focus on the core technical or academic terms.
+                - Keep it short (3–7 keywords max).
+                - Use English only.
+                - If applicable, add relevant field keywords (e.g., "deep learning", "reinforcement learning", "graph neural network", "transformer", etc.).
+                - Return only the optimized English query, nothing else.
 
-{papers_info}
+                User query: "{user_query}"
 
-Format:
-- 초록 요약 [N]: [간단한 설명] \n
-- 논문 추천 근거 [N]: [간단한 설명]
-###END_OF_PAPER_ANALYSIS###
+                Output format (strictly):
+                arxiv_query = "optimized English search query"
 """
+
     
     try:
         message = client.chat.completions.create(
