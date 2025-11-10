@@ -450,12 +450,7 @@ def generate_recommendation_explanation(user_query, recommended_papers):
                 - Return only the optimized English query, nothing else.
 
                 User query: "{user_query}"
-
-                Output format (strictly):
-                arxiv_query = "optimized English search query"
-                
-                
-              
+  
                 The user is interested in the following field: "{user_query}"
 
                 Analyze the abstracts of the recommended papers below. 
