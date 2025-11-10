@@ -570,7 +570,6 @@ if st.session_state.last_papers is not None and not st.session_state.last_papers
                 if row.get('doi'):
                     st.write(f"**DOI:** {row['doi']}")
                 st.write(f"**인용수:** {row.get('citation_count', 0)}회")
-                st.write(f"**검색방법:** {row.get('found_by', 'N/A')}")
                 st.write(f"\n**초록:**\n{row['abstract']}")
             with col2:
                 st.metric("추천 점수", f"{scores[idx]:.3f}")
