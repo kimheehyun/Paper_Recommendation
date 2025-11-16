@@ -358,10 +358,10 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         citation_score = min(citation_count / 100, 1.0) if citation_count > 0 else 0
         citation_scores.append(citation_score)
         
-        # 최신성 점수
+        # 최신성 점수 1년 단위로
         pub_date = datetime.strptime(row["published"], "%Y-%m-%d")
         days_old = (datetime.now() - pub_date).days
-        recency_score = max(1 - (days_old / 3650), 0)
+        recency_score = max(1 - (days_old / 365), 0)
         recency_scores.append(recency_score)
     
     # Seed-based 공동참고 점수 계산
