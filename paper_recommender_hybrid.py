@@ -328,7 +328,7 @@ def calculate_recommendation_score(papers_df, query_embedding, top_n=10, use_two
         normalized_semantic = semantic_scores / (semantic_scores.max() + 0.001)
         
         # 1차 점수: 의미(70%) + 인용(30%)
-        quick_scores = 1.0 * normalized_semantic + 0 * normalized_citations
+        quick_scores = 0* normalized_semantic + 1.0 * normalized_citations
         
         # 상위 15개만 선택 (정밀 분석 대상)
         top_15_idx = np.argsort(quick_scores)[::-1][:15]
